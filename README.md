@@ -4,7 +4,8 @@ A VCV Rack 2 implementation of Iannis Xenakis's dynamic stochastic synthesis alg
 
 ![GENDYN module screenshot](doc/screenshot.png)
 
-> Xenakis's original: [GENDY3 on YouTube](https://www.youtube.com/watch?v=KM7MkHmBEXQ)
+> Xenakis's original: [GENDY3 on YouTube](https://www.youtube.com/watch?v=KM7MkHmBEXQ)  
+> Source: [github.com/jeremycg/gendyn-plugin](https://github.com/jeremycg/gendyn-plugin)
 
 ---
 
