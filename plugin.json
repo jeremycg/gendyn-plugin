@@ -1,0 +1,28 @@
+{
+  "slug": "GENDYN",
+  "name": "GENDYN",
+  "version": "2.0.0",
+  "license": "GPL-3.0-only",
+  "brand": "GENDYN",
+  "author": "Jeremy Gray",
+  "authorEmail": "jeremycgray@gmail.com",
+  "authorUrl": "https://github.com/jeremycgray",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "https://github.com/jeremycgray/gendyn-plugin",
+  "changelogUrl": "",
+  "modules": [
+    {
+      "slug": "GENDYN",
+      "name": "GENDYN",
+      "description": "Dynamic stochastic synthesis oscillator based on Xenakis GENDY3",
+      "manualUrl": "",
+      "modularGridUrl": "",
+      "tags": [
+        "Oscillator",
+        "Random",
+        "Noise"
+      ]
+    }
+  ]
+}

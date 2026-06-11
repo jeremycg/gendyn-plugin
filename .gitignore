@@ -1,0 +1,11 @@
+# Build output
+build/
+dep/
+
+# Compiled binaries
+plugin.so
+plugin.dll
+
+# Distribution packages
+dist/
+*.vcvplugin
