@@ -7,8 +7,17 @@ Formula: freq = 44100 / (Imax * rall)
 The opening section (PARAG310) used 7 of these 14 pitches.
 PARAG311 (before-last section) used all 14.
 
-Voices are pitch-FIXED (B_DUR_WIDTH ≈ 0). The stochastic walk modulates
-timbre only, not pitch — this is how Xenakis got the "beautiful clear tones."
+Each voice keeps its Xenakis N (= Imax) and centre pitch, but the
+stochastic parameters are set to the SuperCollider Gendy defaults
+(Gendy1.ar: Cauchy dists, ampscale/durscale 0.5, 440-660 Hz band):
+  SCALE_AMP 0.1 / SCALE_DUR 0.2  (sim-matched to SC's evolution speed;
+    SC's dur walk moves 2x faster relative to its half-range)
+  B_AMP 1.0       (SC's amp range is fixed at full scale)
+  B_DUR_WIDTH 0.2 (1.5:1 frequency band, like SC's 440:660)
+  DIST Cauchy, PERSIST 0 (uncorrelated steps - the classic SC texture)
+Pitch therefore wanders within +-20% of each cluster pitch rather than
+being locked, and the texture is rough and noisy rather than the
+"beautiful clear tones" variant.
 """
 
 import json, os, sys, io, tempfile, tarfile, subprocess, random
@@ -59,17 +68,18 @@ for i, (track, imax, rall, note) in enumerate(VOICES):
         "model": "GENDYN",
         "version": "2.0.0",
         "params": [
-            {"id": 0,  "value": float(imax)},    # N = Imax (direct integer now)
-            {"id": 1,  "value": 0.007},           # SCALE_AMP — timbral evolution (0.35x old 0.02: second-order walk)
-            {"id": 2,  "value": 0.00035},         # SCALE_DUR — near-zero, keeps pitch locked (0.35x old 0.001)
-            {"id": 3,  "value": 0.8},             # B_AMP
+            {"id": 0,  "value": float(imax)},    # N = Imax (Xenakis Table 1)
+            {"id": 1,  "value": 0.1},             # SCALE_AMP ≈ SC ampscale 0.5
+            {"id": 2,  "value": 0.2},             # SCALE_DUR ≈ SC durscale 0.5
+            {"id": 3,  "value": 1.0},             # B_AMP — SC's fixed full amp range
             {"id": 4,  "value": hz},              # B_DUR_CENTER — exact Xenakis frequency
-            {"id": 5,  "value": 0.03},            # B_DUR_WIDTH — nearly fixed pitch
-            {"id": 6,  "value": 1.0},             # DISTRIBUTION: Gaussian
+            {"id": 5,  "value": 0.2},             # B_DUR_WIDTH — 1.5:1 band like SC's 440–660
+            {"id": 6,  "value": 0.0},             # DISTRIBUTION: Cauchy (SC default)
             {"id": 7,  "value": 0.0},             # SCALE_AMP_ATT
             {"id": 8,  "value": 0.0},             # SCALE_DUR_ATT
             {"id": 9,  "value": 0.0},             # B_AMP_ATT
             {"id": 10, "value": 0.0},             # B_DUR_ATT
+            {"id": 11, "value": 0.0},             # PERSIST 0 — uncorrelated steps (SC texture)
         ],
         "pos": [(i % 8) * 8, i // 8],
     })
@@ -85,12 +95,13 @@ for g in range(n_groups):
         "plugin": "Fundamental",
         "model": "VCMixer",
         "version": "2.6.4",
+        # VCMixer params: 0=master, 1-4=channel levels
         "params": [
-            {"id": 0, "value": 0.7},
+            {"id": 0, "value": 0.7},   # master
             {"id": 1, "value": 0.7},
             {"id": 2, "value": 0.7},
             {"id": 3, "value": 0.7},
-            {"id": 4, "value": 0.25},
+            {"id": 4, "value": 0.7},
         ],
         "pos": [68 + g * 8, 0],
     })
@@ -102,14 +113,9 @@ modules.append({
     "plugin": "Fundamental",
     "model": "Mixer",
     "version": "2.6.4",
+    # Mixer's only param is one level knob; it sums all connected inputs.
     "params": [
-        {"id": 0, "value": 1.0},
-        {"id": 1, "value": 1.0},
-        {"id": 2, "value": 1.0},
-        {"id": 3, "value": 1.0},
-        {"id": 4, "value": 0.0},
-        {"id": 5, "value": 0.0},
-        {"id": 6, "value": 0.2},
+        {"id": 0, "value": 0.25},
     ],
     "pos": [100, 0],
 })

@@ -50,6 +50,7 @@ for i, (center_hz, s_amp, s_dur) in enumerate(VOICES):
             {"id": 8,  "value": 0.0},            # SCALE_DUR_ATT
             {"id": 9,  "value": 0.0},            # B_AMP_ATT
             {"id": 10, "value": 0.0},            # B_DUR_ATT
+            {"id": 11, "value": 0.3},            # PERSIST (glide persistence)
         ],
         "pos": [i * 8, 0],
     })
@@ -61,14 +62,9 @@ modules.append({
     "plugin": "Fundamental",
     "model": "Mixer",
     "version": "2.6.4",
+    # Mixer's only param is one level knob; it sums all connected inputs.
     "params": [
-        {"id": 0, "value": 1.0},   # ch1
-        {"id": 1, "value": 1.0},   # ch2
-        {"id": 2, "value": 0.0},
-        {"id": 3, "value": 0.0},
-        {"id": 4, "value": 0.0},
-        {"id": 5, "value": 0.0},
-        {"id": 6, "value": 0.5},   # master
+        {"id": 0, "value": 0.25},
     ],
     "pos": [20, 0],
 })

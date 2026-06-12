@@ -16,13 +16,15 @@ evolves stochastically each cycle. Each of the N breakpoints has an
 amplitude and a duration (in samples) governed by a **second-order
 random walk** (Serra 1993, eqs. 2 & 4; Hoffmann 2023):
 
-    step_{i,j+1} = MIR(step_{i,j} + f(z), −limit, +limit)
-    y_{i,j+1}    = MIR(y_{i,j} + step_{i,j+1}, barrier_min, barrier_max)
+    step_{i,j+1} = MIR(step_{i,j} + f(z), −1, +1)
+    y_{i,j+1}    = MIR(y_{i,j} + scale·barrier·step_{i,j+1}, barrier_min, barrier_max)
 
-A fresh draw from the chosen distribution nudges a persistent step
-variable (the primary walk), mirrored into its own limits; the step's
-current position then moves the breakpoint (the secondary walk),
-mirrored into the barrier range. Serra's eq. 4 mirror structure — one
+A fresh draw from the chosen distribution nudges a persistent,
+normalized step variable (the primary walk), mirrored into [−1, 1];
+the step then moves the breakpoint (the secondary walk) scaled by
+SCALE × barrier, mirrored into the barrier range. The spread of the
+draws f(z) is set by the PERSIST knob and determines how many cycles
+the step keeps its direction. Serra's eq. 4 mirror structure — one
 mirror pair on the step values, one on the positions — corresponds to
 the primary and secondary barriers respectively.
 
@@ -33,9 +35,11 @@ direction for many cycles, producing GENDY3's characteristic directed
 glissandi; the step limits cap the maximum glide rate (SCALE DUR) and
 the rate of timbral change (SCALE AMP).
 
-**Continuity condition** (Serra eq. 1): breakpoint 0 of each new cycle
-is pinned to the last value of the previous cycle, keeping the output
-seamless at every cycle boundary.
+**Continuity condition** (Serra eq. 1): every segment starts from the
+value the output just reached, so the segment that crosses the cycle
+boundary interpolates from the previous cycle's last breakpoint to the
+freshly walked breakpoint 0 — the waveform is seamless by construction
+and all N segments carry the stochastic walk.
 
 Frequency is emergent — it equals `sampleRate / sum(dur[i])` across
 all N breakpoints.
@@ -51,6 +55,7 @@ all N breakpoints.
 | B DUR CTR | Center frequency for duration barriers (20–5000 Hz) |
 | B DUR WID | Duration barrier half-width around center (0=fixed pitch, 1=wide) |
 | DIST | Distribution: 0=Cauchy, 1=Gaussian, 2=Uniform, 3=Logistic (default) |
+| PERSIST | Glide persistence: how many cycles a step keeps its direction. 0% ≈ uncorrelated jitter (first-order / SC Gendy feel), 30% (default) ≈ 16 cycles, 100% = very long steady glides |
 
 ## CV Inputs
 
@@ -73,13 +78,20 @@ All CV inputs are ±5V with attenuverter knobs (±5V × attenuverter × 0.1 = ±
 
 ## Tuning notes
 
-- **SCALE AMP / SCALE DUR** now set the *maximum rate of change* (the
-  primary-walk barriers), not a per-cycle jitter amount. Steps are
-  correlated between cycles, so even small values produce audible
-  directed motion — glissandi for SCALE DUR, timbral drift for
-  SCALE AMP. The per-draw spread is 0.25× the step limit (hardcoded).
+- **SCALE AMP / SCALE DUR** set the *maximum rate of change*: the
+  per-cycle move is capped at SCALE × barrier. Steps are correlated
+  between cycles, so even small values produce audible directed
+  motion — glissandi for SCALE DUR, timbral drift for SCALE AMP.
+  For a target evolution time, `scale ≈ 0.35 / sqrt(seconds × Hz)`.
+- **PERSIST** trades jitter against glide at constant step size: low
+  settings decorrelate the steps every cycle (rough, noisy, close to
+  the classic SuperCollider Gendy texture), high settings hold a
+  direction for hundreds of cycles (steady glissandi).
 - **B DUR WID = 0** locks pitch to B DUR CTR; the stochastic walk then evolves timbre only. This is how Xenakis achieved the "beautiful clear tones" in the middle sections of GENDY3.
 - Logistic distribution (DIST=3) is the closest match to Xenakis's original and is the default.
+- **SuperCollider Gendy mode:** PERSIST 0%, SCALE ≈ 0.1, DIST Cauchy,
+  B DUR CTR ≈ 520 Hz with B DUR WID ≈ 0.2 lands close to `Gendy1.ar()`
+  at its defaults.
 
 ## Compositional technique
 
@@ -87,8 +99,8 @@ Xenakis composed GENDY3 by varying barrier widths per voice per section. Wide ba
 
 See the `patches/` folder for reference patches:
 - `GENDY3_2voice.vcv` — two slow low-register voices (60 Hz, 80 Hz)
-- `GENDY3_16voice.vcv` — 16-voice spread across the spectrum with LFO barrier modulation
-- `GENDY3_cluster.vcv` — Xenakis's actual 14-voice pitch cluster from the score (Hoffmann 2022, Table 1)
+- `GENDY3_16voice.vcv` — 16-voice spread across the spectrum
+- `GENDY3_cluster.vcv` — Xenakis's actual 14-voice pitch cluster from the score (Hoffmann 2022, Table 1), voiced with SuperCollider Gendy default texture (Cauchy, uncorrelated steps, ±20% pitch band)
 
 Patch files can be regenerated from the scripts in `tools/`:
 
@@ -112,6 +124,7 @@ cp dist/GENDYN-2.0.0-lin-x64.vcvplugin ~/.Rack2/plugins-lin-x64/
 RACK_DIR=~/Rack2-SDK-win/Rack-SDK \
 CC=x86_64-w64-mingw32-gcc-posix \
 CXX=x86_64-w64-mingw32-g++-posix \
+STRIP=x86_64-w64-mingw32-strip \
 MACHINE=x86_64-w64-mingw32 \
 make dist
 ```

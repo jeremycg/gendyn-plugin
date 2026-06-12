@@ -18,6 +18,7 @@ struct GENDYN : Module {
         SCALE_DUR_ATT_PARAM,
         B_AMP_ATT_PARAM,
         B_DUR_ATT_PARAM,
+        PERSIST_PARAM,
         PARAMS_LEN
     };
 
@@ -50,6 +51,7 @@ struct GENDYN : Module {
     float target_amp         = 0.f; // amplitude at the end   of the current segment
     int   current_dur        = 1;   // length of the current segment in samples
     float sum_dur            = 1.f; // cached sum of dur[0..N-1], updated per cycle
+    float freq_cv            = 0.f; // cached FREQ output voltage, updated with sum_dur
     int   last_N             = -1;  // -1 forces reinit on the first process() call
 
     dsp::PulseGenerator cycleTrigger;
@@ -72,6 +74,8 @@ struct GENDYN : Module {
         configParam(DISTRIBUTION_PARAM, 0.f,   3.f,    3.f,
             "Distribution (0=Cauchy  1=Gauss  2=Uniform  3=Logistic)");
         getParamQuantity(DISTRIBUTION_PARAM)->snapEnabled = true;
+
+        configParam(PERSIST_PARAM,      0.f,   1.f,    0.3f,  "Glide persistence", "%", 0.f, 100.f);
 
         configParam(SCALE_AMP_ATT_PARAM,-1.f,  1.f,    0.f,   "Scale Amp attenuverter");
         configParam(SCALE_DUR_ATT_PARAM,-1.f,  1.f,    0.f,   "Scale Dur attenuverter");
@@ -156,27 +160,35 @@ struct GENDYN : Module {
     // Apply one cycle of the second-order random walk to all breakpoints
     // (Serra 1993 eq. 2 + 4 with persistent steps; Hoffmann 2023; same
     // factoring as SC Gendy2). The persistent step is a normalized walk in
-    // [-1, 1]: each cycle a draw of fixed 0.25 spread nudges it (0.25 sets
-    // the glide persistence, ~16 cycles to decorrelate), and the step moves
-    // the breakpoint scaled by scale*barrier. The step state is therefore
+    // [-1, 1]: each cycle a draw of `spread` nudges it, and the step moves
+    // the breakpoint scaled by scale*barrier. The spread sets the glide
+    // persistence — how many cycles the step keeps its direction (~1 cycle
+    // at spread 1, ~16 at 0.25, hundreds at 0.01). The step state is
     // scale-independent, making SCALE a pure gain: CV modulation rescales
     // motion instantly and reversibly instead of folding or starving the
     // accumulated steps. scale*barrier caps the per-cycle move: gainDur is
     // the maximum glissando rate, gainAmp the rate of timbral change.
     void runCycleUpdate(int N, float scaleAmp, float scaleDur,
-                        float bAmp, float bDurMin, float bDurMax, int dist) {
+                        float bAmp, float bDurMin, float bDurMax,
+                        int dist, float spread) {
         const float pDurHW  = (bDurMax - bDurMin) * 0.5f;
         const float gainAmp = scaleAmp * bAmp;
         const float gainDur = scaleDur * pDurHW;
         sum_dur = 0.f;
         for (int i = 0; i < N; i++) {
-            step_amp[i] = reflect(step_amp[i] + drawSample(dist, 0.25f), -1.f, 1.f);
+            step_amp[i] = reflect(step_amp[i] + drawSample(dist, spread), -1.f, 1.f);
             amp[i]      = reflect(amp[i] + gainAmp * step_amp[i], -bAmp, bAmp);
 
-            step_dur[i] = reflect(step_dur[i] + drawSample(dist, 0.25f), -1.f, 1.f);
+            step_dur[i] = reflect(step_dur[i] + drawSample(dist, spread), -1.f, 1.f);
             dur[i]      = reflect(dur[i] + gainDur * step_dur[i], bDurMin, bDurMax);
             sum_dur += dur[i];
         }
+    }
+
+    // 1V/oct CV (C4 = 0V) for the emergent frequency sampleRate / sum_dur.
+    float computeFreqCV(float sampleRate) const {
+        if (sum_dur <= 0.f) return 0.f;
+        return clamp(std::log2(sampleRate / sum_dur / dsp::FREQ_C4), -5.f, 5.f);
     }
 
     // ── Main DSP loop ─────────────────────────────────────────────────────────
@@ -226,6 +238,7 @@ struct GENDYN : Module {
         // ── Reinit on N change ────────────────────────────────────────────────
         if (N != last_N) {
             initBreakpoints(N, bAmp, bDurMin, bDurMax);
+            freq_cv = computeFreqCV(args.sampleRate);
             last_N = N;
         }
 
@@ -238,13 +251,10 @@ struct GENDYN : Module {
         outputs[CYCLE_TRIG_OUTPUT].setVoltage(
             cycleTrigger.process(args.sampleTime) ? 10.f : 0.f);
 
-        // Instantaneous frequency based on current duration values (1V/oct, C4=0V).
-        // sum_dur is maintained at init and each cycle update, when dur[] changes.
-        if (sum_dur > 0.f) {
-            const float freq = args.sampleRate / sum_dur;
-            outputs[FREQ_CV_OUTPUT].setVoltage(
-                clamp(std::log2(freq / dsp::FREQ_C4), -5.f, 5.f));
-        }
+        // Instantaneous frequency (1V/oct, C4=0V). sum_dur — and with it
+        // freq_cv — only changes at init and cycle updates, so the log2 is
+        // computed there rather than per sample.
+        outputs[FREQ_CV_OUTPUT].setVoltage(freq_cv);
 
         // ── Advance oscillator state ──────────────────────────────────────────
         if (++current_sample >= current_dur) {
@@ -253,7 +263,15 @@ struct GENDYN : Module {
             current_breakpoint = (current_breakpoint + 1) % N;
 
             if (current_breakpoint == 0) {
-                runCycleUpdate(N, scaleAmp, scaleDur, bAmp, bDurMin, bDurMax, dist);
+                // PERSIST knob -> step-walk draw spread, exponential: 0 -> 1.0
+                // (near-white steps, first-order feel), 0.3 -> 0.25 (default),
+                // 1 -> 0.01 (long steady glides). Needed once per cycle, so
+                // the pow() lives here, off the per-sample path.
+                const float persistSpread =
+                    std::pow(10.f, -2.f * params[PERSIST_PARAM].getValue());
+                runCycleUpdate(N, scaleAmp, scaleDur, bAmp, bDurMin, bDurMax,
+                               dist, persistSpread);
+                freq_cv = computeFreqCV(args.sampleRate);
                 // Continuity at the cycle boundary is inherent: every segment
                 // starts from current_amp (the value just reached), so the
                 // wrap segment interpolates from the old amp[N-1] to the
@@ -328,7 +346,8 @@ struct GENDYWidget : ModuleWidget {
         lbl(14.f,   59.f, 1.9f, bright, "B AMP");
         lbl(14.f,   71.f, 1.9f, dim,    "B DUR CTR");
         lbl(14.f,   83.f, 1.9f, bright, "B DUR WID");
-        lbl(20.32f, 95.f, 1.9f, dim,    "DIST");
+        lbl(12.f,   95.f, 1.9f, dim,    "DIST");
+        lbl(28.6f,  95.f, 1.9f, dim,    "PERSIST");
 
         // Output labels
         lbl(7.f,    117.5f, 2.0f, outclr, "OUT");
@@ -375,7 +394,9 @@ struct GENDYWidget : ModuleWidget {
         addInput(createInputCentered<PJ301MPort>(     mm2px(Vec(35.f, 78.f)), module, GENDYN::B_DUR_INPUT));
 
         addParam(createParamCentered<RoundBlackSnapKnob>(
-            mm2px(Vec(20.32f, 90.f)), module, GENDYN::DISTRIBUTION_PARAM));
+            mm2px(Vec(12.f, 90.f)), module, GENDYN::DISTRIBUTION_PARAM));
+        addParam(createParamCentered<RoundBlackKnob>(
+            mm2px(Vec(28.6f, 90.f)), module, GENDYN::PERSIST_PARAM));
 
         addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec( 7.f,   110.f)), module, GENDYN::AUDIO_OUTPUT));
         addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(20.32f, 110.f)), module, GENDYN::CYCLE_TRIG_OUTPUT));
