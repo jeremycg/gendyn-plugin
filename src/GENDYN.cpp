@@ -42,11 +42,14 @@ struct GENDYN : Module {
 
     float amp[MAX_N];               // breakpoint amplitudes (volts, range ±bAmp)
     float dur[MAX_N];               // breakpoint durations  (samples)
+    float step_amp[MAX_N];          // persistent primary walk: amplitude step
+    float step_dur[MAX_N];          // persistent primary walk: duration step
     int   current_breakpoint = 0;
     int   current_sample     = 0;
     float current_amp        = 0.f; // amplitude at the start of the current segment
     float target_amp         = 0.f; // amplitude at the end   of the current segment
     int   current_dur        = 1;   // length of the current segment in samples
+    float sum_dur            = 1.f; // cached sum of dur[0..N-1], updated per cycle
     int   last_N             = -1;  // -1 forces reinit on the first process() call
 
     dsp::PulseGenerator cycleTrigger;
@@ -57,8 +60,11 @@ struct GENDYN : Module {
         configParam(N_PARAM,            2.f,   64.f,   13.f,  "Breakpoints (N)");
         getParamQuantity(N_PARAM)->snapEnabled = true;
 
-        configParam(SCALE_AMP_PARAM,    0.f,   1.f,    0.006f,"Amplitude step scale");
-        configParam(SCALE_DUR_PARAM,    0.f,   1.f,    0.01f, "Duration step scale");
+        // Defaults retuned 2026-06 for the second-order walk: steps persist
+        // across cycles, so net drift is ~8x faster at equal scale. 0.35x the
+        // old first-order values preserves the same evolution timescale.
+        configParam(SCALE_AMP_PARAM,    0.f,   1.f,    0.002f, "Amplitude step scale");
+        configParam(SCALE_DUR_PARAM,    0.f,   1.f,    0.0035f,"Duration step scale");
         configParam(B_AMP_PARAM,        0.f,   1.f,    0.8f,  "Amplitude barrier");
         configParam(B_DUR_CENTER_PARAM, 20.f,  5000.f, 220.f, "Center frequency", " Hz");
         configParam(B_DUR_WIDTH_PARAM,  0.f,   1.f,    0.4f,  "Frequency barrier width");
@@ -84,15 +90,16 @@ struct GENDYN : Module {
 
     // ── DSP helpers ───────────────────────────────────────────────────────────
 
-    // Reflect x into [lo, hi] by folding at each barrier until it lands inside
-    // (Serra eq. 3). Guards against a degenerate zero-width range.
+    // Reflect x into [lo, hi] by folding at each barrier (Serra eq. 3).
+    // O(1) triangle fold, equivalent to mirroring repeatedly at the barriers;
+    // constant-time even for far-out x (Cauchy draws have heavy tails).
+    // Guards against a degenerate zero-width range.
     static float reflect(float x, float lo, float hi) {
         if (hi <= lo) return lo;
-        while (x < lo || x > hi) {
-            if (x < lo) x = 2.f * lo - x;
-            if (x > hi) x = 2.f * hi - x;
-        }
-        return x;
+        const float range = hi - lo;
+        float y = std::fmod(x - lo, 2.f * range);
+        if (y < 0.f) y += 2.f * range;
+        return lo + (y > range ? 2.f * range - y : y);
     }
 
     // Inverse-CDF samplers. `scale` is the distribution's spread parameter.
@@ -131,9 +138,13 @@ struct GENDYN : Module {
     // Randomise all breakpoints across the full barrier range and reset the
     // oscillator to breakpoint 0. Called on N change and at startup.
     void initBreakpoints(int N, float bAmp, float bDurMin, float bDurMax) {
+        sum_dur = 0.f;
         for (int i = 0; i < N; i++) {
             amp[i] = (2.f * rack::random::uniform() - 1.f) * bAmp;
             dur[i] = bDurMin + rack::random::uniform() * (bDurMax - bDurMin);
+            step_amp[i] = 0.f;
+            step_dur[i] = 0.f;
+            sum_dur += dur[i];
         }
         current_breakpoint = 0;
         current_sample     = 0;
@@ -142,23 +153,29 @@ struct GENDYN : Module {
         current_dur        = std::max(1, (int)dur[0]);
     }
 
-    // Apply one cycle of the single-level random walk to all breakpoints
-    // (Serra 1993, eq. 2). Each step is drawn from the chosen distribution,
-    // mirrored into [-limit, +limit], added to the current value, then the
-    // result is mirrored back into the barrier range.
-    // Note: amp[0] is overwritten immediately after this call in process() to
-    // satisfy the continuity condition; its value here is discarded.
+    // Apply one cycle of the second-order random walk to all breakpoints
+    // (Serra 1993 eq. 2 + 4 with persistent steps; Hoffmann 2023; same
+    // factoring as SC Gendy2). The persistent step is a normalized walk in
+    // [-1, 1]: each cycle a draw of fixed 0.25 spread nudges it (0.25 sets
+    // the glide persistence, ~16 cycles to decorrelate), and the step moves
+    // the breakpoint scaled by scale*barrier. The step state is therefore
+    // scale-independent, making SCALE a pure gain: CV modulation rescales
+    // motion instantly and reversibly instead of folding or starving the
+    // accumulated steps. scale*barrier caps the per-cycle move: gainDur is
+    // the maximum glissando rate, gainAmp the rate of timbral change.
     void runCycleUpdate(int N, float scaleAmp, float scaleDur,
                         float bAmp, float bDurMin, float bDurMax, int dist) {
-        const float pDurHW   = (bDurMax - bDurMin) * 0.5f;
-        const float limitAmp = scaleAmp * bAmp;
-        const float limitDur = scaleDur * pDurHW;
+        const float pDurHW  = (bDurMax - bDurMin) * 0.5f;
+        const float gainAmp = scaleAmp * bAmp;
+        const float gainDur = scaleDur * pDurHW;
+        sum_dur = 0.f;
         for (int i = 0; i < N; i++) {
-            float sAmp = reflect(drawSample(dist, limitAmp), -limitAmp, limitAmp);
-            amp[i]     = reflect(amp[i] + sAmp, -bAmp, bAmp);
+            step_amp[i] = reflect(step_amp[i] + drawSample(dist, 0.25f), -1.f, 1.f);
+            amp[i]      = reflect(amp[i] + gainAmp * step_amp[i], -bAmp, bAmp);
 
-            float sDur = reflect(drawSample(dist, limitDur), -limitDur, limitDur);
-            dur[i]     = reflect(dur[i] + sDur, bDurMin, bDurMax);
+            step_dur[i] = reflect(step_dur[i] + drawSample(dist, 0.25f), -1.f, 1.f);
+            dur[i]      = reflect(dur[i] + gainDur * step_dur[i], bDurMin, bDurMax);
+            sum_dur += dur[i];
         }
     }
 
@@ -222,10 +239,9 @@ struct GENDYN : Module {
             cycleTrigger.process(args.sampleTime) ? 10.f : 0.f);
 
         // Instantaneous frequency based on current duration values (1V/oct, C4=0V).
-        float sumDur = 0.f;
-        for (int i = 0; i < N; i++) sumDur += dur[i];
-        if (sumDur > 0.f) {
-            const float freq = args.sampleRate / sumDur;
+        // sum_dur is maintained at init and each cycle update, when dur[] changes.
+        if (sum_dur > 0.f) {
+            const float freq = args.sampleRate / sum_dur;
             outputs[FREQ_CV_OUTPUT].setVoltage(
                 clamp(std::log2(freq / dsp::FREQ_C4), -5.f, 5.f));
         }
@@ -238,12 +254,11 @@ struct GENDYN : Module {
 
             if (current_breakpoint == 0) {
                 runCycleUpdate(N, scaleAmp, scaleDur, bAmp, bDurMin, bDurMax, dist);
-                // Continuity condition (Serra eq. 1): y_{0,j+1} = y_{N-1,j}.
-                // The first breakpoint of each new waveform cycle is pinned to
-                // the value we just finished, so the output is seamless at
-                // every cycle boundary. The stochastic walk evolves breakpoints
-                // 1..N-1; amp[0] is set here after runCycleUpdate overwrites it.
-                amp[0] = current_amp;
+                // Continuity at the cycle boundary is inherent: every segment
+                // starts from current_amp (the value just reached), so the
+                // wrap segment interpolates from the old amp[N-1] to the
+                // freshly walked amp[0] with no jump (Serra eq. 1 reads the
+                // two as the same point). All N segments carry the walk.
                 cycleTrigger.trigger(1e-3f);
             }
 

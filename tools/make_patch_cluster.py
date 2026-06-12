@@ -60,8 +60,8 @@ for i, (track, imax, rall, note) in enumerate(VOICES):
         "version": "2.0.0",
         "params": [
             {"id": 0,  "value": float(imax)},    # N = Imax (direct integer now)
-            {"id": 1,  "value": 0.02},            # SCALE_AMP — timbral evolution
-            {"id": 2,  "value": 0.001},           # SCALE_DUR — near-zero, keeps pitch locked
+            {"id": 1,  "value": 0.007},           # SCALE_AMP — timbral evolution (0.35x old 0.02: second-order walk)
+            {"id": 2,  "value": 0.00035},         # SCALE_DUR — near-zero, keeps pitch locked (0.35x old 0.001)
             {"id": 3,  "value": 0.8},             # B_AMP
             {"id": 4,  "value": hz},              # B_DUR_CENTER — exact Xenakis frequency
             {"id": 5,  "value": 0.03},            # B_DUR_WIDTH — nearly fixed pitch

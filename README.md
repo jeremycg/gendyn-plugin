@@ -11,17 +11,34 @@ A VCV Rack 2 implementation of Iannis Xenakis's dynamic stochastic synthesis alg
 
 ## Algorithm
 
-GENDYN implements a piecewise-linear oscillator whose waveform shape evolves stochastically each cycle. Each of the N breakpoints has an amplitude and a duration (in samples) that follow a single-level random walk with reflecting barriers (Serra 1993, eq. 2):
+GENDYN implements a piecewise-linear oscillator whose waveform shape
+evolves stochastically each cycle. Each of the N breakpoints has an
+amplitude and a duration (in samples) governed by a **second-order
+random walk** (Serra 1993, eqs. 2 & 4; Hoffmann 2023):
 
-```
-y_{i,j+1} = y_{i,j} + f(z)
-```
+    step_{i,j+1} = MIR(step_{i,j} + f(z), −limit, +limit)
+    y_{i,j+1}    = MIR(y_{i,j} + step_{i,j+1}, barrier_min, barrier_max)
 
-where `f(z)` is drawn from the chosen distribution and mirrored into `[−limit, +limit]` before being applied. The result is then mirrored back into the barrier range.
+A fresh draw from the chosen distribution nudges a persistent step
+variable (the primary walk), mirrored into its own limits; the step's
+current position then moves the breakpoint (the secondary walk),
+mirrored into the barrier range. Serra's eq. 4 mirror structure — one
+mirror pair on the step values, one on the positions — corresponds to
+the primary and secondary barriers respectively.
 
-**Continuity condition** (Serra eq. 1): breakpoint 0 of each new cycle is pinned to the last value of the previous cycle, keeping the output seamless at every cycle boundary.
+This second-order structure is what distinguishes GENDY3 from S.709,
+where draws move breakpoints directly (Hoffmann 2023). Because steps
+are correlated cycle to cycle, duration changes accumulate in one
+direction for many cycles, producing GENDY3's characteristic directed
+glissandi; the step limits cap the maximum glide rate (SCALE DUR) and
+the rate of timbral change (SCALE AMP).
 
-Frequency is emergent — it equals `sampleRate / sum(dur[i])` across all N breakpoints.
+**Continuity condition** (Serra eq. 1): breakpoint 0 of each new cycle
+is pinned to the last value of the previous cycle, keeping the output
+seamless at every cycle boundary.
+
+Frequency is emergent — it equals `sampleRate / sum(dur[i])` across
+all N breakpoints.
 
 ## Controls
 
@@ -56,8 +73,11 @@ All CV inputs are ±5V with attenuverter knobs (±5V × attenuverter × 0.1 = ±
 
 ## Tuning notes
 
-- **SCALE AMP / SCALE DUR** control how quickly the waveform evolves. The correlation time is roughly `(1/scale)²` cycles. At 220 Hz with scale=0.02 that is ~2500 cycles ≈ 11 seconds.
-- Higher-frequency voices update more often per second and will evolve faster than lower ones at the same scale setting. Tune voices individually or feed them different scale CV.
+- **SCALE AMP / SCALE DUR** now set the *maximum rate of change* (the
+  primary-walk barriers), not a per-cycle jitter amount. Steps are
+  correlated between cycles, so even small values produce audible
+  directed motion — glissandi for SCALE DUR, timbral drift for
+  SCALE AMP. The per-draw spread is 0.25× the step limit (hardcoded).
 - **B DUR WID = 0** locks pitch to B DUR CTR; the stochastic walk then evolves timbre only. This is how Xenakis achieved the "beautiful clear tones" in the middle sections of GENDY3.
 - Logistic distribution (DIST=3) is the closest match to Xenakis's original and is the default.
 
@@ -98,6 +118,8 @@ make dist
 
 ## References
 
-- Serra, X. (1993). Musical Sound Modeling with Sinusoids plus Noise. In G. De Poli, A. Piccialli, & C. Roads (Eds.), *Musical Signal Processing*. Swets & Zeitlinger.
+- Serra, M.-H. (1993). Stochastic Composition and Stochastic Timbre:
+  GENDY3 by Iannis Xenakis. *Perspectives of New Music*, 31(1), 236–257.
+- Hoffmann, P. (2023). Stochastic Synthesis. iannis-xenakis.org/en/stochastic-synthesis/
 - Hoffmann, P. (2022). The Genesis of GENDY3. *Computer Music Journal*, 46(1).
 - Xenakis, I. (1992). *Formalized Music*. Pendragon Press.

@@ -2,10 +2,13 @@
 """Generate GENDY3_2voice.vcv — two slow, deep GENDYN oscillators.
 
 Two voices at 60 Hz and 80 Hz, N=7, Gaussian distribution.
-Scale is chosen so each voice evolves over roughly 30–40 seconds:
-  scale = 1/sqrt(evolution_secs * update_rate)
-  60 Hz, 35 sec target → scale = 1/sqrt(35*60) ≈ 0.022
-  80 Hz, 35 sec target → scale = 1/sqrt(35*80) ≈ 0.019
+Scale is chosen so each voice evolves over roughly 30–40 seconds.
+With the second-order walk (persistent steps), drift is ~8x faster than the
+old first-order walk at equal scale, so the old diffusion formula gains a
+0.35 factor (measured by simulation, constant across the usable range):
+  scale = 0.35/sqrt(evolution_secs * update_rate)
+  60 Hz, 35 sec target → scale = 0.35/sqrt(35*60) ≈ 0.0076
+  80 Hz, 35 sec target → scale = 0.35/sqrt(35*80) ≈ 0.0066
 Wide barriers (0.5) so drift is audible when it happens.
 """
 
@@ -22,8 +25,8 @@ cables  = []
 # ── 2 GENDYN voices ──────────────────────────────────────────────────────────
 # (center_hz, scale_amp, scale_dur)
 VOICES = [
-    (60,  0.022, 0.022),
-    (80,  0.022, 0.022),
+    (60,  0.0076, 0.0076),
+    (80,  0.0066, 0.0066),
 ]
 
 gendyn_ids = []

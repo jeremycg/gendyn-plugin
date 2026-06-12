@@ -57,8 +57,8 @@ for i, (N, center_hz, b_amp_att, b_dur_att) in enumerate(VOICES):
         "version": "2.0.0",
         "params": [
             {"id": 0,  "value": float(N)},          # N (breakpoints)
-            {"id": 1,  "value": 0.022},            # SCALE_AMP
-            {"id": 2,  "value": 0.022},            # SCALE_DUR
+            {"id": 1,  "value": 0.0075},           # SCALE_AMP (0.35x old 0.022: second-order walk)
+            {"id": 2,  "value": 0.0075},           # SCALE_DUR (0.35x old 0.022: second-order walk)
             {"id": 3,  "value": 0.8},              # B_AMP
             {"id": 4,  "value": float(center_hz)}, # B_DUR_CENTER
             {"id": 5,  "value": 0.4},              # B_DUR_WIDTH
