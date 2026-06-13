@@ -15,9 +15,10 @@ stochastic parameters are set to the SuperCollider Gendy defaults
   B_AMP 1.0       (SC's amp range is fixed at full scale)
   B_DUR_WIDTH 0.2 (1.5:1 frequency band, like SC's 440:660)
   DIST Cauchy, PERSIST 0 (uncorrelated steps - the classic SC texture)
-Pitch therefore wanders within +-20% of each cluster pitch rather than
-being locked, and the texture is rough and noisy rather than the
-"beautiful clear tones" variant.
+  LOCK on: durations are normalized each cycle so every voice holds its
+    Xenakis pitch exactly while the waveform keeps walking - this is
+    SC's Gendy3.ar behaviour, and recovers the "beautiful clear tones"
+    character at SC-default timbral evolution speed.
 """
 
 import json, os, sys, io, tempfile, tarfile, subprocess, random
@@ -80,6 +81,8 @@ for i, (track, imax, rall, note) in enumerate(VOICES):
             {"id": 9,  "value": 0.0},             # B_AMP_ATT
             {"id": 10, "value": 0.0},             # B_DUR_ATT
             {"id": 11, "value": 0.0},             # PERSIST 0 — uncorrelated steps (SC texture)
+            {"id": 12, "value": 1.0},             # LOCK on — durations normalized per cycle,
+                                                  # pitch exact (SC Gendy3 behaviour)
         ],
         "pos": [(i % 8) * 8, i // 8],
     })

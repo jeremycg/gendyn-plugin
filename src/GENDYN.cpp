@@ -19,6 +19,7 @@ struct GENDYN : Module {
         B_AMP_ATT_PARAM,
         B_DUR_ATT_PARAM,
         PERSIST_PARAM,
+        LOCK_PARAM,
         PARAMS_LEN
     };
 
@@ -52,6 +53,9 @@ struct GENDYN : Module {
     int   current_dur        = 1;   // length of the current segment in samples
     float sum_dur            = 1.f; // cached sum of dur[0..N-1], updated per cycle
     float freq_cv            = 0.f; // cached FREQ output voltage, updated with sum_dur
+    float norm_k             = 1.f; // playback duration scale; LOCK mode sets it so
+                                    // the cycle length is exactly sampleRate/centerFreq
+    float dur_err            = 0.f; // error-diffusion remainder for int segment lengths
     int   last_N             = -1;  // -1 forces reinit on the first process() call
 
     dsp::PulseGenerator cycleTrigger;
@@ -76,6 +80,9 @@ struct GENDYN : Module {
         getParamQuantity(DISTRIBUTION_PARAM)->snapEnabled = true;
 
         configParam(PERSIST_PARAM,      0.f,   1.f,    0.3f,  "Glide persistence", "%", 0.f, 100.f);
+
+        configSwitch(LOCK_PARAM,        0.f,   1.f,    0.f,   "Pitch lock (normalize durations)",
+            {"Off", "On"});
 
         configParam(SCALE_AMP_ATT_PARAM,-1.f,  1.f,    0.f,   "Scale Amp attenuverter");
         configParam(SCALE_DUR_ATT_PARAM,-1.f,  1.f,    0.f,   "Scale Dur attenuverter");
@@ -155,6 +162,7 @@ struct GENDYN : Module {
         current_amp        = 0.f;
         target_amp         = amp[0];
         current_dur        = std::max(1, (int)dur[0]);
+        dur_err            = 0.f;
     }
 
     // Apply one cycle of the second-order random walk to all breakpoints
@@ -185,10 +193,21 @@ struct GENDYN : Module {
         }
     }
 
-    // 1V/oct CV (C4 = 0V) for the emergent frequency sampleRate / sum_dur.
-    float computeFreqCV(float sampleRate) const {
-        if (sum_dur <= 0.f) return 0.f;
-        return clamp(std::log2(sampleRate / sum_dur / dsp::FREQ_C4), -5.f, 5.f);
+    // 1V/oct CV (C4 = 0V) for the frequency sampleRate / period.
+    float computeFreqCV(float sampleRate, float period) const {
+        if (period <= 0.f) return 0.f;
+        return clamp(std::log2(sampleRate / period / dsp::FREQ_C4), -5.f, 5.f);
+    }
+
+    // LOCK mode (SC Gendy3-style): scale playback durations so each cycle
+    // sums to exactly sampleRate/centerFreq. The duration *walk* stays in
+    // its barriers untouched — relative durations keep evolving (timbre)
+    // while pitch holds — so toggling LOCK is clean and stateless.
+    void updateNormAndFreq(bool lockPitch, float sampleRate, float centerFreq) {
+        norm_k = 1.f;
+        if (lockPitch && sum_dur > 0.f)
+            norm_k = (sampleRate / centerFreq) / sum_dur;
+        freq_cv = computeFreqCV(sampleRate, sum_dur * norm_k);
     }
 
     // ── Main DSP loop ─────────────────────────────────────────────────────────
@@ -235,10 +254,13 @@ struct GENDYN : Module {
 
         int dist = clamp((int)params[DISTRIBUTION_PARAM].getValue(), 0, 3);
 
+        const bool lockPitch = params[LOCK_PARAM].getValue() > 0.5f;
+
         // ── Reinit on N change ────────────────────────────────────────────────
         if (N != last_N) {
             initBreakpoints(N, bAmp, bDurMin, bDurMax);
-            freq_cv = computeFreqCV(args.sampleRate);
+            updateNormAndFreq(lockPitch, args.sampleRate, centerFreq);
+            current_dur = std::max(1, (int)(dur[0] * norm_k));
             last_N = N;
         }
 
@@ -271,7 +293,7 @@ struct GENDYN : Module {
                     std::pow(10.f, -2.f * params[PERSIST_PARAM].getValue());
                 runCycleUpdate(N, scaleAmp, scaleDur, bAmp, bDurMin, bDurMax,
                                dist, persistSpread);
-                freq_cv = computeFreqCV(args.sampleRate);
+                updateNormAndFreq(lockPitch, args.sampleRate, centerFreq);
                 // Continuity at the cycle boundary is inherent: every segment
                 // starts from current_amp (the value just reached), so the
                 // wrap segment interpolates from the old amp[N-1] to the
@@ -281,7 +303,13 @@ struct GENDYN : Module {
             }
 
             target_amp  = amp[current_breakpoint];
-            current_dur = std::max(1, (int)dur[current_breakpoint]);
+            // Error-diffused rounding of the (possibly normalized) duration:
+            // plain truncation runs ~0.5 sample short per segment, which adds
+            // up to a few percent of sharpness; carrying the remainder keeps
+            // the long-run period exact (which LOCK mode depends on).
+            const float fd = dur[current_breakpoint] * norm_k + dur_err;
+            current_dur    = std::max(1, (int)(fd + 0.5f));
+            dur_err        = clamp(fd - (float)current_dur, -4.f, 4.f);
         }
     }
 };
@@ -345,6 +373,7 @@ struct GENDYWidget : ModuleWidget {
         lbl(14.f,   47.f, 1.9f, dim,    "SCALE DUR");
         lbl(14.f,   59.f, 1.9f, bright, "B AMP");
         lbl(14.f,   71.f, 1.9f, dim,    "B DUR CTR");
+        lbl(31.f,   71.f, 1.9f, bright, "LOCK");
         lbl(14.f,   83.f, 1.9f, bright, "B DUR WID");
         lbl(12.f,   95.f, 1.9f, dim,    "DIST");
         lbl(28.6f,  95.f, 1.9f, dim,    "PERSIST");
@@ -384,9 +413,11 @@ struct GENDYWidget : ModuleWidget {
         addParam(createParamCentered<Trimpot>(        mm2px(Vec(27.f, 54.f)), module, GENDYN::B_AMP_ATT_PARAM));
         addInput(createInputCentered<PJ301MPort>(     mm2px(Vec(35.f, 54.f)), module, GENDYN::B_AMP_INPUT));
 
-        // B_DUR_CENTER — frequency knob, no CV modulation
+        // B_DUR_CENTER — frequency knob, no CV modulation; LOCK switch beside it
         addParam(createParamCentered<RoundBlackKnob>(
             mm2px(Vec(9.f, 66.f)), module, GENDYN::B_DUR_CENTER_PARAM));
+        addParam(createParamCentered<CKSS>(
+            mm2px(Vec(31.f, 66.f)), module, GENDYN::LOCK_PARAM));
 
         // B_DUR_WIDTH row
         addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec( 9.f, 78.f)), module, GENDYN::B_DUR_WIDTH_PARAM));

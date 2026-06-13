@@ -56,6 +56,7 @@ all N breakpoints.
 | B DUR WID | Duration barrier half-width around center (0=fixed pitch, 1=wide) |
 | DIST | Distribution: 0=Cauchy, 1=Gaussian, 2=Uniform, 3=Logistic (default) |
 | PERSIST | Glide persistence: how many cycles a step keeps its direction. 0% ≈ uncorrelated jitter (first-order / SC Gendy feel), 30% (default) ≈ 16 cycles, 100% = very long steady glides |
+| LOCK | Pitch lock: normalizes durations each cycle so pitch holds exactly at B DUR CTR while the waveform keeps evolving (SC `Gendy3` behaviour) |
 
 ## CV Inputs
 
@@ -87,7 +88,15 @@ All CV inputs are ±5V with attenuverter knobs (±5V × attenuverter × 0.1 = ±
   settings decorrelate the steps every cycle (rough, noisy, close to
   the classic SuperCollider Gendy texture), high settings hold a
   direction for hundreds of cycles (steady glissandi).
-- **B DUR WID = 0** locks pitch to B DUR CTR; the stochastic walk then evolves timbre only. This is how Xenakis achieved the "beautiful clear tones" in the middle sections of GENDY3.
+- **LOCK** rescales each cycle's durations to sum to exactly
+  `sampleRate / B DUR CTR`: pitch is constant, but the *relative*
+  durations keep walking, so the waveform — and therefore timbre —
+  still evolves. This matches SuperCollider's `Gendy3.ar`. The wider
+  B DUR WID, the more timbral duration variety under the locked pitch.
+- **B DUR WID = 0** also fixes pitch (all durations equal) but kills
+  duration-walk timbre with it; LOCK with a wide B DUR WID is how
+  Xenakis got the "beautiful clear tones" — stable pitch, living
+  waveform.
 - Logistic distribution (DIST=3) is the closest match to Xenakis's original and is the default.
 - **SuperCollider Gendy mode:** PERSIST 0%, SCALE ≈ 0.1, DIST Cauchy,
   B DUR CTR ≈ 520 Hz with B DUR WID ≈ 0.2 lands close to `Gendy1.ar()`
@@ -100,7 +109,7 @@ Xenakis composed GENDY3 by varying barrier widths per voice per section. Wide ba
 See the `patches/` folder for reference patches:
 - `GENDY3_2voice.vcv` — two slow low-register voices (60 Hz, 80 Hz)
 - `GENDY3_16voice.vcv` — 16-voice spread across the spectrum
-- `GENDY3_cluster.vcv` — Xenakis's actual 14-voice pitch cluster from the score (Hoffmann 2022, Table 1), voiced with SuperCollider Gendy default texture (Cauchy, uncorrelated steps, ±20% pitch band)
+- `GENDY3_cluster.vcv` — Xenakis's actual 14-voice pitch cluster from the score (Hoffmann 2022, Table 1), voiced like SuperCollider's `Gendy3` at its defaults: Cauchy, uncorrelated steps, pitch LOCKed per voice with the waveform free to evolve
 
 Patch files can be regenerated from the scripts in `tools/`:
 

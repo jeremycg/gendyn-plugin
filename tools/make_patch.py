@@ -68,6 +68,7 @@ for i, (N, center_hz) in enumerate(VOICES):
             {"id": 9,  "value": 0.0},              # B_AMP_ATT
             {"id": 10, "value": 0.0},              # B_DUR_ATT
             {"id": 11, "value": 0.3},              # PERSIST (glide persistence)
+            {"id": 12, "value": 0.0},              # LOCK off — pitch wanders
         ],
         "pos": [col, row],
     })
