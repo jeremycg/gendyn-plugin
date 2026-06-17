@@ -84,9 +84,11 @@ piecewise-linear curve over one cycle (x = cumulative duration, y = amplitude).
 As the two random walks evolve, the vertices drift — vertically (the amplitude
 walk) and horizontally (the duration walk) — so the polygon slowly morphs in
 place. The faint horizontal band marks the ±B AMP barriers the amplitude walk
-reflects within. It reads a ~45 Hz snapshot of the breakpoint state (the walk is
-slow, so the picture is smooth); the per-sample playhead and the individual
-random draws run far too fast to draw and are deliberately not shown.
+reflects within. The display low-passes the breakpoints (~0.4 s) so the picture
+eases at a watchable pace — the walk actually updates every cycle (audio rate),
+which is ~an order of magnitude too fast to follow, so the smoothing removes the
+per-cycle shimmer while leaving the slow morph (and the audio) untouched. The
+per-sample playhead and the individual random draws are deliberately not shown.
 
 ## Tuning notes
 

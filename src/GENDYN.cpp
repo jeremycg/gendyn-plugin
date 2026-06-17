@@ -67,9 +67,15 @@ struct GENDYN : Module {
     // brief tear during the copy is harmless for a visualiser.
     float dispAmp[MAX_N] = {};
     float dispDur[MAX_N] = {};
-    int   dispN     = 13;
+    int   dispN     = -1;        // -1 forces a snap (no crossfade) on first refresh
     float dispBAmp  = 0.8f;
     int   dispClock = 0;
+    // The walk faithfully updates every cycle (audio rate), so at 45 fps the raw
+    // breakpoints jitter ~an order of magnitude faster than is watchable. This is
+    // a display-only low-pass: the drawn polygon eases toward the live state over
+    // ~DISP_TAU seconds, removing the per-cycle shimmer while the slow morph (and
+    // the audio) is untouched.
+    static constexpr float DISP_TAU = 0.4f;
 
     GENDYN() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -323,12 +329,21 @@ struct GENDYN : Module {
             dur_err        = clamp(fd - (float)current_dur, -4.f, 4.f);
         }
 
-        // ── Refresh display snapshot (~45 Hz) ─────────────────────────────────
+        // ── Refresh display snapshot (~45 Hz, display-only low-pass) ──────────
         if (++dispClock >= (int)(args.sampleRate / 45.f)) {
+            const float dt = (float)dispClock / args.sampleRate;   // actual frame interval
             dispClock = 0;
-            std::copy(amp, amp + N, dispAmp);
-            std::copy(dur, dur + N, dispDur);
-            dispN    = N;
+            if (N != dispN) {                       // N changed: snap, don't crossfade
+                std::copy(amp, amp + N, dispAmp);
+                std::copy(dur, dur + N, dispDur);
+                dispN = N;
+            } else {
+                const float a = 1.f - std::exp(-dt / DISP_TAU);
+                for (int i = 0; i < N; i++) {
+                    dispAmp[i] += (amp[i] - dispAmp[i]) * a;
+                    dispDur[i] += (dur[i] - dispDur[i]) * a;
+                }
+            }
             dispBAmp = bAmp;
         }
     }
