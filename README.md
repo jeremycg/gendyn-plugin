@@ -77,6 +77,17 @@ All CV inputs are ±5V with attenuverter knobs (±5V × attenuverter × 0.1 = ±
 | TRIG | 10V / 1ms trigger on each complete waveform cycle |
 | FREQ | Current frequency as 1V/oct CV (0V = C4 = 261.626 Hz) |
 
+## Display
+
+The screen up top draws the live waveform polygon: the N breakpoints as a
+piecewise-linear curve over one cycle (x = cumulative duration, y = amplitude).
+As the two random walks evolve, the vertices drift — vertically (the amplitude
+walk) and horizontally (the duration walk) — so the polygon slowly morphs in
+place. The faint horizontal band marks the ±B AMP barriers the amplitude walk
+reflects within. It reads a ~45 Hz snapshot of the breakpoint state (the walk is
+slow, so the picture is smooth); the per-sample playhead and the individual
+random draws run far too fast to draw and are deliberately not shown.
+
 ## Tuning notes
 
 - **SCALE AMP / SCALE DUR** set the *maximum rate of change*: the

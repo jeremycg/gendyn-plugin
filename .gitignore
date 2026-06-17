@@ -9,3 +9,6 @@ plugin.dll
 # Distribution packages
 dist/
 *.vcvplugin
+
+# Tool output
+gendyn_panel.png

@@ -1,6 +1,7 @@
 #include "plugin.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 static const int MAX_N = 64;
 
@@ -59,6 +60,16 @@ struct GENDYN : Module {
     int   last_N             = -1;  // -1 forces reinit on the first process() call
 
     dsp::PulseGenerator cycleTrigger;
+
+    // Display snapshot: the audio thread refreshes this ~45 Hz; the UI thread
+    // reads it instead of the live amp[]/dur[] (which a fast cycle rewrites). The
+    // walk drifts slowly, so the snapshot shows a smoothly morphing polygon; a
+    // brief tear during the copy is harmless for a visualiser.
+    float dispAmp[MAX_N] = {};
+    float dispDur[MAX_N] = {};
+    int   dispN     = 13;
+    float dispBAmp  = 0.8f;
+    int   dispClock = 0;
 
     GENDYN() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -311,6 +322,130 @@ struct GENDYN : Module {
             current_dur    = std::max(1, (int)(fd + 0.5f));
             dur_err        = clamp(fd - (float)current_dur, -4.f, 4.f);
         }
+
+        // ── Refresh display snapshot (~45 Hz) ─────────────────────────────────
+        if (++dispClock >= (int)(args.sampleRate / 45.f)) {
+            dispClock = 0;
+            std::copy(amp, amp + N, dispAmp);
+            std::copy(dur, dur + N, dispDur);
+            dispN    = N;
+            dispBAmp = bAmp;
+        }
+    }
+};
+
+
+// ─── Polygon display ───────────────────────────────────────────────────────
+// The signature dynamic-stochastic-synthesis picture: the N breakpoints drawn
+// as a piecewise-linear waveform (x = cumulative duration over one cycle,
+// y = amplitude). As the two random walks evolve, the vertices drift — vertically
+// (amplitude walk) and horizontally (duration walk) — so the whole polygon slowly
+// morphs. The faint band marks the ±B AMP amplitude barriers the walk reflects in.
+// Read lock-free from the audio thread's snapshot — fine for a display.
+struct GENDYScope : Widget {
+    GENDYN* module = nullptr;
+    std::shared_ptr<Font> font;
+
+    void draw(const DrawArgs& args) override {
+        nvgBeginPath(args.vg);
+        nvgRoundedRect(args.vg, 0, 0, box.size.x, box.size.y, mm2px(2.f));
+        nvgFillColor(args.vg, nvgRGB(0x07, 0x07, 0x12));
+        nvgFill(args.vg);
+        nvgStrokeColor(args.vg, nvgRGB(0x2b, 0x2b, 0x4d));
+        nvgStrokeWidth(args.vg, 1.2f);
+        nvgStroke(args.vg);
+        Widget::draw(args);
+    }
+
+    void drawLayer(const DrawArgs& args, int layer) override {
+        if (layer == 1) {
+            nvgScissor(args.vg, 0.f, 0.f, box.size.x, box.size.y);
+
+            const float W = box.size.x, Hh = box.size.y;
+            const float mid = Hh * 0.54f;        // waveform centreline (room for title)
+            const float halfH = Hh * 0.40f;      // amp = ±1 maps to ±halfH
+            auto Y = [&](float a) { return mid - clamp(a, -1.1f, 1.1f) * halfH; };
+
+            // Amplitude-barrier band (±B AMP): the reflecting walls of the amp walk.
+            float bAmp = module ? module->dispBAmp : 0.8f;
+            for (float sgn : {-1.f, 1.f}) {
+                nvgBeginPath(args.vg);
+                nvgMoveTo(args.vg, 0, Y(sgn * bAmp));
+                nvgLineTo(args.vg, W, Y(sgn * bAmp));
+                nvgStrokeColor(args.vg, nvgRGBA(0x40, 0x90, 0x70, 0x40));
+                nvgStrokeWidth(args.vg, 1.f);
+                nvgStroke(args.vg);
+            }
+
+            // Build the polygon from the snapshot (or a demo shape in the browser).
+            int N = (module && module->dispN >= 2) ? module->dispN : 13;
+            float total = 0.f;
+            for (int i = 0; i < N; i++)
+                total += module ? std::max(1.f, module->dispDur[i]) : 1.f;
+            if (total <= 0.f) total = 1.f;
+
+            auto ampAt = [&](int i) {
+                if (module) return module->dispAmp[i];
+                return 0.7f * std::sin(2.f * (float)M_PI * 2.f * i / N);   // demo
+            };
+            auto durAt = [&](int i) {
+                return module ? std::max(1.f, module->dispDur[i]) : 1.f;
+            };
+
+            // Vertices at cumulative segment starts; close the period at x = W.
+            nvgBeginPath(args.vg);
+            float cum = 0.f;
+            for (int i = 0; i < N; i++) {
+                float x = cum / total * W;
+                if (i == 0) nvgMoveTo(args.vg, x, Y(ampAt(0)));
+                else        nvgLineTo(args.vg, x, Y(ampAt(i)));
+                cum += durAt(i);
+            }
+            nvgLineTo(args.vg, W, Y(ampAt(0)));     // wrap: period end == start value
+            nvgLineCap(args.vg, NVG_ROUND);
+            nvgLineJoin(args.vg, NVG_ROUND);
+            nvgStrokeColor(args.vg, nvgRGBA(0x55, 0xe0, 0xa0, 0x55));   // green glow
+            nvgStrokeWidth(args.vg, 3.2f);
+            nvgStroke(args.vg);
+            nvgStrokeColor(args.vg, nvgRGB(0xc0, 0xff, 0xd8));          // bright core
+            nvgStrokeWidth(args.vg, 1.2f);
+            nvgStroke(args.vg);
+
+            // Breakpoint vertices (the walking points), if sparse enough to read.
+            if (N <= 40) {
+                cum = 0.f;
+                for (int i = 0; i < N; i++) {
+                    float x = cum / total * W;
+                    nvgBeginPath(args.vg);
+                    nvgCircle(args.vg, x, Y(ampAt(i)), 1.6f);
+                    nvgFillColor(args.vg, nvgRGBA(0xc0, 0xff, 0xd8, 0xdd));
+                    nvgFill(args.vg);
+                    cum += durAt(i);
+                }
+            }
+
+            if (!font)
+                font = APP->window->loadFont(asset::system("res/fonts/DejaVuSans.ttf"));
+            if (font) {
+                nvgFontFaceId(args.vg, font->handle);
+                nvgFontSize(args.vg, mm2px(3.2f));
+                nvgTextLetterSpacing(args.vg, mm2px(0.4f));
+                nvgFillColor(args.vg, nvgRGBA(0x9a, 0xff, 0xb8, 0xcc));
+                nvgTextAlign(args.vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+                nvgText(args.vg, mm2px(2.6f), mm2px(2.2f), "GENDYN", NULL);
+                nvgTextLetterSpacing(args.vg, 0.f);
+
+                char buf[16];
+                std::snprintf(buf, sizeof(buf), "N=%d", N);
+                nvgFontSize(args.vg, mm2px(2.3f));
+                nvgFillColor(args.vg, nvgRGBA(0x60, 0xb0, 0x88, 0xaa));
+                nvgTextAlign(args.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_BOTTOM);
+                nvgText(args.vg, W - mm2px(2.4f), Hh - mm2px(1.8f), buf, NULL);
+            }
+
+            nvgResetScissor(args.vg);
+        }
+        Widget::drawLayer(args, layer);
     }
 };
 
@@ -330,10 +465,7 @@ struct GENDYWidget : ModuleWidget {
         nvgFontFaceId(args.vg, font->handle);
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
 
-        const NVGcolor title  = nvgRGB(0xe0, 0xe0, 0xff);
-        const NVGcolor bright = nvgRGB(0xaa, 0xaa, 0xcc);
         const NVGcolor dim    = nvgRGB(0x77, 0x77, 0x99);
-        const NVGcolor lo     = nvgRGB(0x55, 0x55, 0x77);
         const NVGcolor outclr = nvgRGB(0xcc, 0xcc, 0xee);
 
         auto lbl = [&](float x, float y, float sz, NVGcolor col, const char* s) {
@@ -342,46 +474,23 @@ struct GENDYWidget : ModuleWidget {
             nvgText(args.vg, mm2px(x), mm2px(y), s, nullptr);
         };
 
-        auto hline = [&](float y) {
-            nvgBeginPath(args.vg);
-            nvgMoveTo(args.vg, mm2px(2.5f), mm2px(y));
-            nvgLineTo(args.vg, mm2px(38.f),  mm2px(y));
-            nvgStrokeColor(args.vg, nvgRGB(0x33, 0x33, 0x55));
-            nvgStrokeWidth(args.vg, 0.6f);
-            nvgStroke(args.vg);
-        };
+        // Top control row labels (knobs at y=54)
+        lbl( 8.0f, 61.f, 1.8f, dim, "N");
+        lbl(20.5f, 61.f, 1.8f, dim, "FREQ");
+        lbl(30.5f, 61.f, 1.6f, dim, "LOCK");
+        lbl(41.0f, 61.f, 1.8f, dim, "DIST");
+        lbl(53.0f, 61.f, 1.7f, dim, "PERSIST");
 
-        // Title
-        nvgFontSize(args.vg, mm2px(4.2f));
-        nvgTextLetterSpacing(args.vg, mm2px(0.3f));
-        nvgFillColor(args.vg, title);
-        nvgText(args.vg, mm2px(20.32f), mm2px(7.5f), "GENDYN", nullptr);
-        nvgTextLetterSpacing(args.vg, 0.f);
+        // CV channel-strip labels (above each knob at y=74)
+        lbl( 9.00f, 68.f, 1.8f, dim, "S AMP");
+        lbl(24.32f, 68.f, 1.8f, dim, "S DUR");
+        lbl(39.64f, 68.f, 1.8f, dim, "B AMP");
+        lbl(54.96f, 68.f, 1.8f, dim, "B WID");
 
-        hline(13.f);
-        hline(99.f);
-
-        // Column headers for attenuverter / CV jack columns
-        lbl(27.f, 15.5f, 1.7f, lo, "att");
-        lbl(35.f, 15.5f, 1.7f, lo, "cv");
-
-        // Parameter labels sit 5 mm below each knob centre, matching the
-        // convention used by the output labels below their jacks.
-        // Knob rows: 18, 30, 42, 54, 66, 78, 90 mm  →  labels at +5 mm.
-        lbl(20.32f, 23.f, 1.9f, dim,    "N");
-        lbl(14.f,   35.f, 1.9f, dim,    "SCALE AMP");
-        lbl(14.f,   47.f, 1.9f, dim,    "SCALE DUR");
-        lbl(14.f,   59.f, 1.9f, bright, "B AMP");
-        lbl(14.f,   71.f, 1.9f, dim,    "B DUR CTR");
-        lbl(31.f,   71.f, 1.9f, bright, "LOCK");
-        lbl(14.f,   83.f, 1.9f, bright, "B DUR WID");
-        lbl(12.f,   95.f, 1.9f, dim,    "DIST");
-        lbl(28.6f,  95.f, 1.9f, dim,    "PERSIST");
-
-        // Output labels
-        lbl(7.f,    117.5f, 2.0f, outclr, "OUT");
-        lbl(20.32f, 117.5f, 2.0f, outclr, "TRIG");
-        lbl(33.f,   117.5f, 2.0f, outclr, "FREQ");
+        // Output labels (jacks at y=112)
+        lbl(15.0f, 118.5f, 1.9f, outclr, "OUT");
+        lbl(30.5f, 118.5f, 1.9f, outclr, "TRIG");
+        lbl(46.0f, 118.5f, 1.9f, outclr, "FREQ");
 
         nvgRestore(args.vg);
     }
@@ -390,48 +499,43 @@ struct GENDYWidget : ModuleWidget {
         setModule(module);
         setPanel(createPanel(asset::plugin(pluginInstance, "res/GENDYN.svg")));
 
-        addChild(createWidget<ScrewSilver>(mm2px(Vec(1.0f,    1.0f))));
-        addChild(createWidget<ScrewSilver>(mm2px(Vec(34.62f,  1.0f))));
-        addChild(createWidget<ScrewSilver>(mm2px(Vec(1.0f,  122.0f))));
-        addChild(createWidget<ScrewSilver>(mm2px(Vec(34.62f,122.0f))));
+        addChild(createWidget<ScrewSilver>(mm2px(Vec(1.0f,   1.0f))));
+        addChild(createWidget<ScrewSilver>(mm2px(Vec(54.96f, 1.0f))));
+        addChild(createWidget<ScrewSilver>(mm2px(Vec(1.0f,   122.0f))));
+        addChild(createWidget<ScrewSilver>(mm2px(Vec(54.96f, 122.0f))));
 
-        addParam(createParamCentered<RoundBlackSnapKnob>(
-            mm2px(Vec(20.32f, 18.f)), module, GENDYN::N_PARAM));
+        // Morphing-polygon scope across the top.
+        GENDYScope* scope = new GENDYScope();
+        scope->module = module;
+        scope->box.pos  = mm2px(Vec(5.5f, 8.f));
+        scope->box.size = mm2px(Vec(50.f, 36.f));
+        addChild(scope);
 
-        // SCALE_AMP row: knob | att | cv
-        addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec( 9.f, 30.f)), module, GENDYN::SCALE_AMP_PARAM));
-        addParam(createParamCentered<Trimpot>(        mm2px(Vec(27.f, 30.f)), module, GENDYN::SCALE_AMP_ATT_PARAM));
-        addInput(createInputCentered<PJ301MPort>(     mm2px(Vec(35.f, 30.f)), module, GENDYN::SCALE_AMP_INPUT));
+        // Top control row (y=54): N | FREQ | LOCK | DIST | PERSIST
+        addParam(createParamCentered<RoundBlackSnapKnob>(mm2px(Vec( 8.0f, 54.f)), module, GENDYN::N_PARAM));
+        addParam(createParamCentered<RoundBlackKnob>(    mm2px(Vec(20.5f, 54.f)), module, GENDYN::B_DUR_CENTER_PARAM));
+        addParam(createParamCentered<CKSS>(              mm2px(Vec(30.5f, 54.f)), module, GENDYN::LOCK_PARAM));
+        addParam(createParamCentered<RoundBlackSnapKnob>(mm2px(Vec(41.0f, 54.f)), module, GENDYN::DISTRIBUTION_PARAM));
+        addParam(createParamCentered<RoundBlackKnob>(    mm2px(Vec(53.0f, 54.f)), module, GENDYN::PERSIST_PARAM));
 
-        // SCALE_DUR row
-        addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec( 9.f, 42.f)), module, GENDYN::SCALE_DUR_PARAM));
-        addParam(createParamCentered<Trimpot>(        mm2px(Vec(27.f, 42.f)), module, GENDYN::SCALE_DUR_ATT_PARAM));
-        addInput(createInputCentered<PJ301MPort>(     mm2px(Vec(35.f, 42.f)), module, GENDYN::SCALE_DUR_INPUT));
+        // CV channel strips (knob y=74 / attenuverter y=86 / jack y=96)
+        struct Strip { float x; int knob, att, in; };
+        const Strip strips[] = {
+            { 9.00f, GENDYN::SCALE_AMP_PARAM,  GENDYN::SCALE_AMP_ATT_PARAM, GENDYN::SCALE_AMP_INPUT},
+            {24.32f, GENDYN::SCALE_DUR_PARAM,  GENDYN::SCALE_DUR_ATT_PARAM, GENDYN::SCALE_DUR_INPUT},
+            {39.64f, GENDYN::B_AMP_PARAM,      GENDYN::B_AMP_ATT_PARAM,     GENDYN::B_AMP_INPUT},
+            {54.96f, GENDYN::B_DUR_WIDTH_PARAM,GENDYN::B_DUR_ATT_PARAM,     GENDYN::B_DUR_INPUT},
+        };
+        for (const Strip& s : strips) {
+            addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec(s.x, 74.f)), module, s.knob));
+            addParam(createParamCentered<Trimpot>(       mm2px(Vec(s.x, 86.f)), module, s.att));
+            addInput(createInputCentered<PJ301MPort>(    mm2px(Vec(s.x, 96.f)), module, s.in));
+        }
 
-        // B_AMP row
-        addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec( 9.f, 54.f)), module, GENDYN::B_AMP_PARAM));
-        addParam(createParamCentered<Trimpot>(        mm2px(Vec(27.f, 54.f)), module, GENDYN::B_AMP_ATT_PARAM));
-        addInput(createInputCentered<PJ301MPort>(     mm2px(Vec(35.f, 54.f)), module, GENDYN::B_AMP_INPUT));
-
-        // B_DUR_CENTER — frequency knob, no CV modulation; LOCK switch beside it
-        addParam(createParamCentered<RoundBlackKnob>(
-            mm2px(Vec(9.f, 66.f)), module, GENDYN::B_DUR_CENTER_PARAM));
-        addParam(createParamCentered<CKSS>(
-            mm2px(Vec(31.f, 66.f)), module, GENDYN::LOCK_PARAM));
-
-        // B_DUR_WIDTH row
-        addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec( 9.f, 78.f)), module, GENDYN::B_DUR_WIDTH_PARAM));
-        addParam(createParamCentered<Trimpot>(        mm2px(Vec(27.f, 78.f)), module, GENDYN::B_DUR_ATT_PARAM));
-        addInput(createInputCentered<PJ301MPort>(     mm2px(Vec(35.f, 78.f)), module, GENDYN::B_DUR_INPUT));
-
-        addParam(createParamCentered<RoundBlackSnapKnob>(
-            mm2px(Vec(12.f, 90.f)), module, GENDYN::DISTRIBUTION_PARAM));
-        addParam(createParamCentered<RoundBlackKnob>(
-            mm2px(Vec(28.6f, 90.f)), module, GENDYN::PERSIST_PARAM));
-
-        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec( 7.f,   110.f)), module, GENDYN::AUDIO_OUTPUT));
-        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(20.32f, 110.f)), module, GENDYN::CYCLE_TRIG_OUTPUT));
-        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(33.f,   110.f)), module, GENDYN::FREQ_CV_OUTPUT));
+        // Outputs (y=112): OUT | TRIG | FREQ
+        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(15.0f, 112.f)), module, GENDYN::AUDIO_OUTPUT));
+        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(30.5f, 112.f)), module, GENDYN::CYCLE_TRIG_OUTPUT));
+        addOutput(createOutputCentered<PJ301MPort>(mm2px(Vec(46.0f, 112.f)), module, GENDYN::FREQ_CV_OUTPUT));
     }
 };
 

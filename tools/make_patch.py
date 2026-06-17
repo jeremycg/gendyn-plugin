@@ -47,14 +47,14 @@ cables  = []
 gendyn_ids = []
 for i, (N, center_hz) in enumerate(VOICES):
     row = i // 8
-    col = (i % 8) * 8
+    col = (i % 8) * 12
     mid = uid()
     gendyn_ids.append(mid)
     modules.append({
         "id": mid,
         "plugin": "GENDYN",
         "model": "GENDYN",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "params": [
             {"id": 0,  "value": float(N)},          # N (breakpoints)
             {"id": 1,  "value": 0.0075},           # SCALE_AMP (0.35x old 0.022: second-order walk)
@@ -92,7 +92,7 @@ for g in range(4):
             {"id": 3, "value": 0.7},
             {"id": 4, "value": 0.7},
         ],
-        "pos": [68 + g * 8, 0],
+        "pos": [98 + g * 8, 0],
     })
 
 # ── Fundamental::Mixer  (sums the 4 group outputs, 13HP) ─────────────────────
@@ -107,7 +107,7 @@ modules.append({
     "params": [
         {"id": 0, "value": 0.25},
     ],
-    "pos": [100, 0],
+    "pos": [132, 0],
 })
 
 # ── Core::AudioInterface ──────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ modules.append({
         },
         "dcFilter": True
     },
-    "pos": [130, 0],
+    "pos": [148, 0],
 })
 
 # ── Cables ────────────────────────────────────────────────────────────────────

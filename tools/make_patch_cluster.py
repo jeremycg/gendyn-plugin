@@ -67,7 +67,7 @@ for i, (track, imax, rall, note) in enumerate(VOICES):
         "id": mid,
         "plugin": "GENDYN",
         "model": "GENDYN",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "params": [
             {"id": 0,  "value": float(imax)},    # N = Imax (Xenakis Table 1)
             {"id": 1,  "value": 0.1},             # SCALE_AMP ≈ SC ampscale 0.5
@@ -84,7 +84,7 @@ for i, (track, imax, rall, note) in enumerate(VOICES):
             {"id": 12, "value": 1.0},             # LOCK on — durations normalized per cycle,
                                                   # pitch exact (SC Gendy3 behaviour)
         ],
-        "pos": [(i % 8) * 8, i // 8],
+        "pos": [(i % 8) * 12, i // 8],
     })
 
 # ── 4 × VCMixer (groups of 4) ─────────────────────────────────────────────────
@@ -106,7 +106,7 @@ for g in range(n_groups):
             {"id": 3, "value": 0.7},
             {"id": 4, "value": 0.7},
         ],
-        "pos": [68 + g * 8, 0],
+        "pos": [98 + g * 8, 0],
     })
 
 # ── Main Mixer ────────────────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ modules.append({
     "params": [
         {"id": 0, "value": 0.25},
     ],
-    "pos": [100, 0],
+    "pos": [132, 0],
 })
 
 # ── AudioInterface ────────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ modules.append({
                   "blockSize": 256, "inputOffset": 0, "outputOffset": 0},
         "dcFilter": True
     },
-    "pos": [116, 0],
+    "pos": [148, 0],
 })
 
 # ── Cables ────────────────────────────────────────────────────────────────────

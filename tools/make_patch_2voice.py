@@ -37,7 +37,7 @@ for i, (center_hz, s_amp, s_dur) in enumerate(VOICES):
         "id": mid,
         "plugin": "GENDYN",
         "model": "GENDYN",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "params": [
             {"id": 0,  "value": 7.0},           # N (breakpoints)
             {"id": 1,  "value": s_amp},          # SCALE_AMP
@@ -53,7 +53,7 @@ for i, (center_hz, s_amp, s_dur) in enumerate(VOICES):
             {"id": 11, "value": 0.3},            # PERSIST (glide persistence)
             {"id": 12, "value": 0.0},            # LOCK off — pitch wanders
         ],
-        "pos": [i * 8, 0],
+        "pos": [i * 12, 0],
     })
 
 # ── Fundamental::Mixer (2-channel mix → audio out) ───────────────────────────
@@ -67,7 +67,7 @@ modules.append({
     "params": [
         {"id": 0, "value": 0.25},
     ],
-    "pos": [20, 0],
+    "pos": [26, 0],
 })
 
 # ── Core::AudioInterface ──────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ modules.append({
         },
         "dcFilter": True
     },
-    "pos": [36, 0],
+    "pos": [40, 0],
 })
 
 # ── Cables ────────────────────────────────────────────────────────────────────
