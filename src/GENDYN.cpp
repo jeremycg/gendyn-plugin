@@ -1,5 +1,6 @@
 #include "plugin.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 
@@ -61,21 +62,17 @@ struct GENDYN : Module {
 
     dsp::PulseGenerator cycleTrigger;
 
-    // Display snapshot: the audio thread refreshes this ~45 Hz; the UI thread
-    // reads it instead of the live amp[]/dur[] (which a fast cycle rewrites). The
-    // walk drifts slowly, so the snapshot shows a smoothly morphing polygon; a
-    // brief tear during the copy is harmless for a visualiser.
-    float dispAmp[MAX_N] = {};
-    float dispDur[MAX_N] = {};
-    int   dispN     = -1;        // -1 forces a snap (no crossfade) on first refresh
-    float dispBAmp  = 0.8f;
+    // Display snapshot: ~45 Hz the audio thread publishes the breakpoints into a
+    // lock-free double buffer (fill the back buffer, flip dispBuf with a release
+    // store); the UI reads the front buffer after an acquire load. The walk drifts
+    // slowly, so the polygon morphs smoothly, and the read no longer races the
+    // per-cycle writer.
+    float dispAmp[2][MAX_N] = {};
+    float dispDur[2][MAX_N] = {};
+    int   dispN[2]    = {13, 13};
+    float dispBAmp[2] = {0.8f, 0.8f};
+    std::atomic<int> dispBuf{0};
     int   dispClock = 0;
-    // The walk faithfully updates every cycle (audio rate), so at 45 fps the raw
-    // breakpoints jitter ~an order of magnitude faster than is watchable. This is
-    // a display-only low-pass: the drawn polygon eases toward the live state over
-    // ~DISP_TAU seconds, removing the per-cycle shimmer while the slow morph (and
-    // the audio) is untouched.
-    static constexpr float DISP_TAU = 0.4f;
 
     GENDYN() {
         config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -329,22 +326,15 @@ struct GENDYN : Module {
             dur_err        = clamp(fd - (float)current_dur, -4.f, 4.f);
         }
 
-        // ── Refresh display snapshot (~45 Hz, display-only low-pass) ──────────
-        if (++dispClock >= (int)(args.sampleRate / 45.f)) {
-            const float dt = (float)dispClock / args.sampleRate;   // actual frame interval
+        // ── Refresh display snapshot (~45 Hz) ─────────────────────────────────
+        if (++dispClock >= (int)(args.sampleRate / 45.f)) {       // publish snapshot ~45 Hz
             dispClock = 0;
-            if (N != dispN) {                       // N changed: snap, don't crossfade
-                std::copy(amp, amp + N, dispAmp);
-                std::copy(dur, dur + N, dispDur);
-                dispN = N;
-            } else {
-                const float a = 1.f - std::exp(-dt / DISP_TAU);
-                for (int i = 0; i < N; i++) {
-                    dispAmp[i] += (amp[i] - dispAmp[i]) * a;
-                    dispDur[i] += (dur[i] - dispDur[i]) * a;
-                }
-            }
-            dispBAmp = bAmp;
+            int next = 1 - dispBuf.load(std::memory_order_relaxed);
+            std::copy(amp, amp + N, dispAmp[next]);
+            std::copy(dur, dur + N, dispDur[next]);
+            dispN[next]    = N;
+            dispBAmp[next] = bAmp;
+            dispBuf.store(next, std::memory_order_release);
         }
     }
 };
@@ -381,8 +371,10 @@ struct GENDYScope : Widget {
             const float halfH = Hh * 0.40f;      // amp = ±1 maps to ±halfH
             auto Y = [&](float a) { return mid - clamp(a, -1.1f, 1.1f) * halfH; };
 
+            int b = module ? module->dispBuf.load(std::memory_order_acquire) : 0;
+
             // Amplitude-barrier band (±B AMP): the reflecting walls of the amp walk.
-            float bAmp = module ? module->dispBAmp : 0.8f;
+            float bAmp = module ? module->dispBAmp[b] : 0.8f;
             for (float sgn : {-1.f, 1.f}) {
                 nvgBeginPath(args.vg);
                 nvgMoveTo(args.vg, 0, Y(sgn * bAmp));
@@ -393,18 +385,18 @@ struct GENDYScope : Widget {
             }
 
             // Build the polygon from the snapshot (or a demo shape in the browser).
-            int N = (module && module->dispN >= 2) ? module->dispN : 13;
+            int N = (module && module->dispN[b] >= 2) ? module->dispN[b] : 13;
             float total = 0.f;
             for (int i = 0; i < N; i++)
-                total += module ? std::max(1.f, module->dispDur[i]) : 1.f;
+                total += module ? std::max(1.f, module->dispDur[b][i]) : 1.f;
             if (total <= 0.f) total = 1.f;
 
             auto ampAt = [&](int i) {
-                if (module) return module->dispAmp[i];
+                if (module) return module->dispAmp[b][i];
                 return 0.7f * std::sin(2.f * (float)M_PI * 2.f * i / N);   // demo
             };
             auto durAt = [&](int i) {
-                return module ? std::max(1.f, module->dispDur[i]) : 1.f;
+                return module ? std::max(1.f, module->dispDur[b][i]) : 1.f;
             };
 
             // Vertices at cumulative segment starts; close the period at x = W.
