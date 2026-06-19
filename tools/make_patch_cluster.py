@@ -145,7 +145,7 @@ ci = 0
 
 for i, gid in enumerate(gendyn_ids):
     group = i // 4
-    ch_in = (i % 4) + 1
+    ch_in = (i % 4) + 5  # 5-8 = CH1-CH4 audio (0=mix CV, 1-4=level CV)
     cables.append({
         "id": uid(),
         "outputModuleId": gid, "outputId": 0,

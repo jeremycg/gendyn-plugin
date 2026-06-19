@@ -139,7 +139,7 @@ ci = 0  # color index
 # GENDYN AUDIO_OUT(0) → VCMixer channel inputs
 for i, gid in enumerate(gendyn_ids):
     group  = i // 4       # which VCMixer (0-3)
-    ch_in  = (i % 4) + 1  # ids 1-4 = CH1-CH4 audio (id 0 = MIX_CV_INPUT, skip it)
+    ch_in  = (i % 4) + 5  # ids 5-8 = CH1-CH4 audio (0=mix CV, 1-4=channel level CV)
     cables.append({
         "id": uid(),
         "outputModuleId": gid,
