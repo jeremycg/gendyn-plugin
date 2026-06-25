@@ -1,5 +1,10 @@
 # GENDYN
 
+> ⚠️ **Moved — this repository is archived.** GENDYN now lives in
+> **[Coalescent](https://github.com/jeremycg/coalescent)**, a single VCV Rack 2
+> plugin that bundles GENDYN, Haptik, and the Axon/Soma neuron pair. Development
+> continues there; this repo is kept for history only.
+
 A VCV Rack 2 implementation of Iannis Xenakis's dynamic stochastic synthesis algorithm (GENDY3, 1991).
 
 ![GENDYN module screenshot](doc/screenshot.png)
